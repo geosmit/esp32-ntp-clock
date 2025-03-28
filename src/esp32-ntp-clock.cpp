@@ -10,10 +10,43 @@
 LiquidCrystal_I2C LCD = LiquidCrystal_I2C(0x27, 16, 2);
 
 #define NTP_SERVER     "pool.ntp.org"
-#define UTC_OFFSET     1
+#define UTC_OFFSET     3600
 #define UTC_OFFSET_DST 1
-#define SDA_PIN 8
-#define SCL_PIN 9
+#define SDA_PIN 4
+#define SCL_PIN 5
+
+byte bitcoinSymbol[8] = {
+  B00100,
+  B11110,
+  B10101,
+  B11110,
+  B10101,
+  B11110,
+  B00100,
+  B00000
+};
+
+byte up[8] = {
+  B00100,
+  B01110,
+  B10101,
+  B00100,
+  B00100,
+  B00100,
+  B00100,
+  B00100
+};
+
+byte down[8] = {
+  B00100,
+  B00100,
+  B00100,
+  B00100,
+  B00100,
+  B10101,
+  B01110,
+  B00100
+};
 
 void spinner() {
   static int8_t counter = 0;
@@ -29,38 +62,55 @@ void printLocalTime() {
   struct tm timeinfo;
   if (!getLocalTime(&timeinfo)) {
     LCD.setCursor(0, 1);
-    LCD.println("Connection Err");
+    LCD.print("Connection Err"); // Změněno z println na print
     return;
   }
 
-  LCD.setCursor(8, 0);
-  LCD.println(&timeinfo, "%H:%M:%S");
-
+  LCD.setCursor(0, 0);
+  LCD.print(&timeinfo, "$/BTC   " "%H:%M:%S"); // Změněno z println na print
   //LCD.setCursor(0, 1);
-  //LCD.println(&timeinfo, "%d/%m/%Y   %Z");
+  //LCD.print(&timeinfo, "%d/%m/%Y   %Z"); // Změněno z println na print
 }
+
+// Declare lastPrice as a global variable
+int lastPrice = 0;
 
 void fetchBitcoinPrice() {
   HTTPClient http;
-  http.begin("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd"); // API pro získání kurzu Bitcoinu
+  http.begin("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd,czk&include_24hr_change=true");
   int httpResponseCode = http.GET();
 
-  if (httpResponseCode == 200) { // Kontrola, zda je odpověď úspěšná
+  if (httpResponseCode == 200) {
     String payload = http.getString();
-    DynamicJsonDocument doc(256); // Použití DynamicJsonDocument místo StaticJsonDocument
+    //StaticJsonDocument<256> doc;
+    JsonDocument doc;
+    Serial.println(payload);
     DeserializationError error = deserializeJson(doc, payload);
 
     if (!error) {
-      int bitcoinPrice = doc["bitcoin"]["usd"]; // Získání kurzu a převod na celé číslo
+      int bitcoinPrice = doc["bitcoin"]["usd"];
+      float change24hUSD = doc["bitcoin"]["usd_24h_change"];
       LCD.setCursor(0, 1);
-      LCD.printf("BTC: %d USD  ", bitcoinPrice); // Zobrazení na displeji bez desetinných míst
+      LCD.print(bitcoinPrice); 
+      LCD.print(" ");
+      if (lastPrice == 0 || lastPrice == bitcoinPrice) {
+      LCD.print("-");
+    } else if (lastPrice < bitcoinPrice) {
+      LCD.write(1);
+    } else {
+      LCD.write(2);
+    }
+    LCD.print(" ");
+    LCD.print(change24hUSD, 2); // Zobrazení s dvěma desetinnými místy
+    LCD.print("%      ");
+    lastPrice = bitcoinPrice;
     } else {
       LCD.setCursor(0, 1);
-      LCD.println("JSON Error");
+      LCD.print("JSON Error"); // Změněno z println na print
     }
   } else {
     LCD.setCursor(0, 1);
-    LCD.println("HTTP Error");
+    LCD.print("HTTP Error"); // Změněno z println na print
   }
 
   http.end();
@@ -71,13 +121,17 @@ void setup() {
   Wire.begin(SDA_PIN, SCL_PIN); // Inicializace I²C sběrnice
   
   LCD.init();
+  LCD.createChar(0, bitcoinSymbol);
+  LCD.createChar(1, up);
+  LCD.createChar(2, down);
   LCD.backlight();
   LCD.setCursor(0, 0);
   LCD.print("Connecting to ");
   LCD.setCursor(0, 1);
   LCD.print("WiFi ");
-
-  WiFi.begin("B53C50", "k@rpE_d1eM", 6);
+  
+  WiFi.begin("Wokwi-GUEST", "", 6);
+  //WiFi.begin("B53C50", "k@rpE_d1eM", 6);
   while (WiFi.status() != WL_CONNECTED) {
     delay(250);
     spinner();
@@ -90,11 +144,16 @@ void setup() {
 
   LCD.clear();
   LCD.setCursor(0, 0);
-  LCD.println("Online  ");
+  LCD.print("Online  ");
   LCD.setCursor(0, 1);
-  LCD.println("Updating...");
+  LCD.print("Updating...");
 
   configTime(UTC_OFFSET, UTC_OFFSET_DST, NTP_SERVER);
+
+  
+  // Načtení a zobrazení kurzu Bitcoinu při prvním spuštění
+  //LCD.clear();
+    fetchBitcoinPrice();
 }
 
 void loop() {
@@ -105,7 +164,7 @@ void loop() {
   printLocalTime();
 
   // Aktualizace kurzu BTC každých 60 sekund
-  if (currentMillis - lastBitcoinUpdate >= 60000) { // 60 000 ms = 1 minuta
+  if (currentMillis - lastBitcoinUpdate >= 120000) { // 60 000 ms = 1 minuta
     fetchBitcoinPrice();
     lastBitcoinUpdate = currentMillis;
   }
